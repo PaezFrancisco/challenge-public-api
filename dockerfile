@@ -1,11 +1,14 @@
-FROM python:3.9-slim
+FROM openjdk:11-slim
 
-WORKDIR /app
+# Instalar Python
+RUN apt-get update && apt-get install -y python3 python3-pip procps
 
+# Copiar e instalar dependencias
 COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt
 
-RUN pip install --no-cache-dir -r requirements.txt
-
+# Configurar entorno
+WORKDIR /app
 COPY . .
 
 EXPOSE 5000

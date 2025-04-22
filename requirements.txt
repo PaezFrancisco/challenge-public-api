@@ -1,8 +1,8 @@
 flask==2.2.3
 werkzeug==2.2.3
 psycopg2-binary==2.9.5
-SQLAlchemy==2.0.4
-Flask-SQLAlchemy==3.0.3
-python-dotenv==1.0.0
+Flask
+pyspark
+mysql-connector-python
 pymysql
 cryptography
