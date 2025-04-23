@@ -1,5 +1,5 @@
 
-def validate_file(request_files, name):
+def validate_file(request_files):
     if 'file' not in request_files:
         return "No se encontró ningún archivo"
     
@@ -8,7 +8,7 @@ def validate_file(request_files, name):
     if file.filename == '':
         return "No se seleccionó ningún archivo"
     
-    if not file.filename.endswith(f'{name}.csv'):
+    if not file.filename.endswith(f'.csv'):
         return "El archivo debe ser un CSV"
    
     return None

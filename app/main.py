@@ -1,6 +1,7 @@
 from flask import Flask, jsonify, request
-from pyspark.sql import SparkSession
+from pyspark.sql import SparkSession,Window
 from pyspark.sql.types import StructType, StructField, IntegerType, StringType
+from pyspark.sql.functions import row_number
 import tests
 
 app = Flask(__name__)
@@ -38,6 +39,13 @@ schema_employees = StructType([
     StructField("job_id",IntegerType(), True),
 ])
 
+# Diccionario con schemas para reutilizar en funciones
+schemas = {
+    'jobs': schema_jobs,
+    'departments': schema_departments,
+    'hired_employees': schema_employees
+}
+
 @app.route('/')
 def route():
     html = """<h1> Hola (futuro) colega! </h1>
@@ -64,78 +72,46 @@ def db_check():
     except Exception as e:
         return jsonify({"status": "Error de conexión", "error": str(e)}), 500
     
-@app.route('/upload-jobs', methods=['POST'])
-def upload_jobs():
+@app.route('/upload-files-truncate', methods=['POST'])
+def upload_files_truncate():
     # Validamos que el file exista y tenga el nombre correcto
-    test_result = tests.validate_file(request.files, 'jobs')
+    test_result = tests.validate_file(request.files)
     if test_result is not None:
         return jsonify({"error": test_result}), 400
     
     try:
+        # Creamos window function
+        window_spec = Window.partitionBy("id").orderBy("id")
         # Obtenemos el archivo del request
         file = request.files['file']
-
-        # Guardamos temporalmente en este path y leemos la data, usando schema definido antes
-        temp_path = "/tmp/temp_jobs.csv"
+        file_name = file.filename
+        table = file_name.split('.')[0]
+        # Guardamos temporalmente en este path y 
+        temp_path = f"/tmp/temp_{file_name}"
         file.save(temp_path)
+
+        # Elegimos schema correcto
+        schema = schemas[table]
+
+        # Leemos la data, usando schema definido antes, y quitamos duplicados en la columna id
         df = spark.read.format("csv") \
             .option("header", "false") \
-            .schema(schema_jobs) \
-            .load(temp_path) \
+            .schema(schema) \
+            .load(temp_path)  \
+            .withColumn("row_number", row_number().over(window_spec)) \
+            .filter("row_number = 1") \
+            .drop("row_number")
         
         # Truncamos tabla (ASUMO que la tabla JOBS no se modificara seguido, es decir, se cargara una sola vez, por eso truncamos)
         df.write \
             .format("jdbc") \
             .options(**JDBC_OPTIONS) \
-            .option("dbtable", 'jobs') \
+            .option("dbtable", table) \
             .mode("overwrite") \
             .save()
-            
         
-        df_test = spark.read.format("jdbc").options(**JDBC_OPTIONS).option("query", "select * from jobs limit 1").load()
-        result = df_test.collect()
         return jsonify({
-            "message": "Archivo Jobs procesado correctamente",
-            "result": result
-        })
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    
-
-@app.route('/upload-departments', methods=['POST'])
-def upload_departments():
-    # Validamos que el file exista y tenga el nombre correcto
-    test_result = tests.validate_file(request.files, 'departments')
-    if test_result is not None:
-        return jsonify({"error": test_result}), 400
-    
-    try:
-        # Obtenemos el archivo del request
-        file = request.files['file']
-
-        # Guardamos temporalmente en este path y leemos la data, usando schema definido antes
-        temp_path = "/tmp/temp_departments.csv"
-        file.save(temp_path)
-        df = spark.read.format("csv") \
-            .option("header", "false") \
-            .schema(schema_departments) \
-            .load(temp_path) \
-        
-        # Truncamos tabla (ASUMO que la tabla DEPARTMENTS no se modificara seguido, es decir, se cargara una sola vez, por eso truncamos)
-        df.write \
-            .format("jdbc") \
-            .options(**JDBC_OPTIONS) \
-            .option("dbtable", 'departments') \
-            .mode("overwrite") \
-            .save()
-            
-        
-        df_test = spark.read.format("jdbc").options(**JDBC_OPTIONS).option("query", "select * from departments limit 1").load()
-        result = df_test.collect()
-        return jsonify({
-            "message": "Archivo Departments procesado correctamente",
-            "result": result
+            "message": f"Archivo {table} procesado correctamente",
         })
         
     except Exception as e:
