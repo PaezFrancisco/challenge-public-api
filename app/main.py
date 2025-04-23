@@ -24,9 +24,9 @@ schema_jobs = StructType([
 ])
 
 # Schema de la tabla departaments
-schema_departaments = StructType([
+schema_departments = StructType([
     StructField("id", IntegerType(), True),
-    StructField("departament", StringType(), True)
+    StructField("department", StringType(), True)
 ])
 
 # Schema de la tabla hired_employees
@@ -96,6 +96,45 @@ def upload_jobs():
         result = df_test.collect()
         return jsonify({
             "message": "Archivo Jobs procesado correctamente",
+            "result": result
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+
+@app.route('/upload-departments', methods=['POST'])
+def upload_departments():
+    # Validamos que el file exista y tenga el nombre correcto
+    test_result = tests.validate_file(request.files, 'departments')
+    if test_result is not None:
+        return jsonify({"error": test_result}), 400
+    
+    try:
+        # Obtenemos el archivo del request
+        file = request.files['file']
+
+        # Guardamos temporalmente en este path y leemos la data, usando schema definido antes
+        temp_path = "/tmp/temp_departments.csv"
+        file.save(temp_path)
+        df = spark.read.format("csv") \
+            .option("header", "false") \
+            .schema(schema_departments) \
+            .load(temp_path) \
+        
+        # Truncamos tabla (ASUMO que la tabla DEPARTMENTS no se modificara seguido, es decir, se cargara una sola vez, por eso truncamos)
+        df.write \
+            .format("jdbc") \
+            .options(**JDBC_OPTIONS) \
+            .option("dbtable", 'departments') \
+            .mode("overwrite") \
+            .save()
+            
+        
+        df_test = spark.read.format("jdbc").options(**JDBC_OPTIONS).option("query", "select * from departments limit 1").load()
+        result = df_test.collect()
+        return jsonify({
+            "message": "Archivo Departments procesado correctamente",
             "result": result
         })
         
