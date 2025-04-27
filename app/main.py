@@ -60,10 +60,16 @@ schemas = {
 @app.route('/')
 def route():
     html = """<h1> Hola (futuro) colega! </h1>
-    <h2>Esta es mi API para el challenge, aca tenes el listado de opciones para probarla. Suerte!</h2>
-    <div>1- Probar conexion a base de datos: ingresar a http://localhost:8080/db-check </div>
-    <div>2- Truncar tablas <b>jobs o departments</b>: correr en terminal <i>curl -X POST -F "file=@jobs.csv" http://localhost:8080/upload-files-truncate</i> </div>
-    <div>3- Ingesta tabla <b>hired_employees</b>: correr en terminal <i>curl -X POST -F "file=@hired_employees.csv" http://localhost:8080/process-employees</i> </div>"""
+    <h2>Esta es mi API para el challenge, aca tenes el listado de opciones para probarla. Te recomiendo correrlas en orden. Suerte!</h2>
+    <div>1- Probar conexion a base de datos: <b>ingresar a http://localhost:8080/db-check</b></div>
+    <div>2- Truncar tablas <b>jobs o departments</b>: correr en terminal <b>curl -X POST -F "file=@jobs.csv" http://localhost:8080/upload-files-truncate</b> </div>
+    <div>3- Ingesta tabla <b>hired_employees</b>: correr en terminal <b>curl -X POST -F "file=@hired_employees.csv" http://localhost:8080/process-employees</b> </div>
+    <div>4-  <b>Query 1</b> Number of employees hired for each job and department in 2021 divided by quarter. The
+    table must be ordered alphabetically by department and job. <b>ingresar a http://localhost:8080/query-1</b></div>
+    <div>5- <b>Query 2</b>  List of ids, name and number of employees hired of each department that hired more
+    employees than the mean of employees hired in 2021 for all the departments, ordered
+    by the number of employees hired (descending). <b>ingresar a http://localhost:8080/query-2</b></div>
+     """
     return html
 
 @app.route('/db-check')
