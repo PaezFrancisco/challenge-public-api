@@ -1,4 +1,14 @@
-1. New table in init.sql
+1. SETUP
+docker compose up
+curl GET http://localhost:8080/db-check
+curl -X POST -F "file=@data/hired_employees.csv" http://localhost:8080/process-employees
+
+2. Check original rows vs final rows in silver
+docker exec -it flask_mysql mysql -uflask_user -pflask_pass flask_db
+SELECT count(*) from hired_employees_historical;
+SELECT count(*) from hired_employees;
+
+3. New table in init.sql
 
 CREATE TABLE hired_employees_rejected (
     id INT,
@@ -10,11 +20,11 @@ CREATE TABLE hired_employees_rejected (
     load_timestamp TIMESTAMP
 );
 
-2.  Add new imports to main.py
+4.  Add new imports to main.py
 
 from pyspark.sql.functions import row_number, current_timestamp, col, when, lit
 
-3. Replace silver table 
+5. Replace silver table 
 
 def silver_employees(df_last_updated):
     temp_table = 'temp_employees'
@@ -103,16 +113,16 @@ def silver_employees(df_last_updated):
         "rejected_by_reason": rejected_by_reason,
     }
 
-4. Docker compose down, and up
+6. Docker compose down, and up
 
 docker-compose down -v && docker-compose up
 
-5. Process the file
+7. Process the file
 
 cd app/files
 curl -X POST -F "file=@hired_employees.csv" http://localhost:8080/process-employees
 
-6. Read table
+8. Read table
 
 docker exec -it flask_mysql mysql -uflask_user -pflask_pass flask_db
 
