@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Archivos que genera Spark en el directorio de trabajo
+spark-warehouse/
+metastore_db/
+derby.log
+
+# Logs
+*.log
+
+# IDEs y sistema operativo
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

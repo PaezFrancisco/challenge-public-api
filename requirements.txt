@@ -1,0 +1,6 @@
+Flask==2.2.3
+Werkzeug==2.2.3
+pyspark==4.3.0
+PyMySQL==1.2.4
+# PyMySQL lo necesita para autenticarse contra MySQL 8 (caching_sha2_password)
+cryptography==50.0.2

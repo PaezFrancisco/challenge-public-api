@@ -1,0 +1,16 @@
+# La imagen de la API solo necesita el codigo de app/ y requirements.txt
+.git
+.gitignore
+**/__pycache__
+**/*.py[cod]
+.venv
+venv
+.vscode
+.idea
+.DS_Store
+
+# Los CSV se suben por curl, init.sql lo monta el contenedor de MySQL y docs/ es documentacion
+data/
+db/
+docs/
+README.md
