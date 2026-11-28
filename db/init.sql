@@ -33,3 +33,13 @@ CREATE TABLE hired_employees_historical (
     job_id INT,
     load_timestamp TIMESTAMP
 ); 
+
+CREATE TABLE hired_employees_rejected (
+    id INT,
+    name VARCHAR(255),
+    datetime VARCHAR(50),
+    department_id INT,
+    job_id INT,
+    reject_reason VARCHAR(50),
+    load_timestamp TIMESTAMP
+);

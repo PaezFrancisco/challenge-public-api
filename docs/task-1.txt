@@ -1,3 +1,90 @@
+PART 1 - CONTEXT
+
+Hello, today we are going to work on a task based on a Data Engineering challenge.
+We are going to split this video into three parts: first the context of the challenge and the solution, then finding the first issue, and finally applying the solution.
+
+So, let's begin with the context.
+The challenge asks us to read three different source files and store them in tables in any database engine. All ingestion must be idempotent, and it must store clean, quality data.
+The solution uses Cursor, Docker, Flask, Spark and MySQL. It is split into two Docker containers: one runs MySQL, the other runs the Flask app with Spark. The Flask app exposes endpoints, and we send POST requests to start each ingestion. Today we only focus on hired_employees.
+
+[ACTION: Click the Explorer icon at the top of the left activity bar. Expand the db folder and click init.sql.]
+Here we see all the DDL. For hired_employees there are two tables: hired_employees_historical keeps the raw data, and hired_employees holds the final data. So the process first appends the raw data to the historical table, then transforms and deduplicates it into the final table. That is a good way to keep the pipeline idempotent.
+
+[ACTION: Expand the app folder and click main.py. Scroll with the mouse wheel down to silver_employees, around line 185.]
+In silver_employees, the code creates a temp table, applies a window function to keep one record per id, and then upserts into hired_employees.
+
+
+PART 2 - FINDING THE ISSUE
+
+[ACTION: Open the terminal with Ctrl+backtick, or View > Terminal.]
+Let's start the environment and run the pipeline as it is today.
+
+$ docker compose up
+
+[ACTION: Click the + in the terminal panel header to open a second terminal.]
+Check the database connection:
+
+$ curl http://localhost:8080/db-check
+
+Load the file:
+
+$ curl -X POST -F "file=@data/hired_employees.csv" http://localhost:8080/process-employees
+
+[ACTION: Open a third terminal with the + and connect to MySQL.]
+Now let's compare the counts:
+
+$ docker exec -it flask_mysql mysql -uflask_user -pflask_pass flask_db
+mysql> SELECT count(*) FROM hired_employees_historical;
+mysql> SELECT count(*) FROM hired_employees;
+
+The historical table has every row from the file, but the final table has fewer. Those rows disappeared with no trace. The current code filters out rows with null id, department_id or job_id, and removes duplicate ids, without recording why. Also, silver_employees catches exceptions and returns the error as a string, so the endpoint can still answer as a success.
+So the first issue is that we lose data silently and cannot audit it.
+
+
+PART 3 - APPLYING THE SOLUTION
+
+The solution has three parts. First, a new table, hired_employees_rejected, stores every discarded row with its reason. Second, each row gets a reject_reason: missing id, department_id, job_id or datetime, or duplicate_id for extra copies of an id. Third, we reconcile the counts: rows read must equal rows loaded plus rows rejected, or the job fails.
+
+Step 1: add the new table.
+[ACTION: Click init.sql, click at the end of the last line, press Enter twice, and paste the CREATE TABLE hired_employees_rejected statement.]
+init.sql only runs on a fresh volume, which is why we reset later.
+
+Step 2: add the imports.
+[ACTION: Click main.py, go to line 4, and add when and lit to the pyspark.sql.functions import.]
+
+from pyspark.sql.functions import row_number, current_timestamp, col, when, lit
+
+Step 3: replace silver_employees.
+[ACTION: In main.py, click on line 185, Shift+click on line 235, paste the new function, and save with Cmd+S.]
+The new function tags each row, marks the duplicates, splits valid from rejected, checks the reconciliation, and appends the rejected rows to hired_employees_rejected. The valid rows still go through the temp table and the upsert. There is no try/except anymore, so errors now return a 500 instead of a fake success.
+
+Step 4: reset the environment and reprocess.
+[ACTION: In the first terminal, stop the containers with Ctrl+C if they are running.]
+
+$ docker-compose down -v && docker-compose up
+
+The -v flag deletes the volume, so init.sql runs again with the new table.
+Then, from the root of the repo, process the file again:
+
+$ curl -X POST -F "file=@data/hired_employees.csv" http://localhost:8080/process-employees
+
+
+VALIDATION
+
+Now let's read the rejected rows, grouped by reason:
+
+mysql> SELECT reject_reason, COUNT(*) FROM hired_employees_rejected GROUP BY reject_reason;
+
+And let's check the reconciliation. Historical should equal the final table plus the rejected table:
+
+mysql> SELECT count(*) FROM hired_employees_historical;
+mysql> SELECT count(*) FROM hired_employees;
+mysql> SELECT count(*) FROM hired_employees_rejected;
+
+Every row is now either loaded or rejected with a reason. Nothing disappears silently, and we can audit every run, because rejected rows are appended with their load timestamp.
+
+That's it for today. Thanks for watching.
+
 1. SETUP
 docker compose up
 curl GET http://localhost:8080/db-check

@@ -1,7 +1,7 @@
 from flask import Flask, jsonify, request
 from pyspark.sql import SparkSession,Window
 from pyspark.sql.types import StructType, StructField, IntegerType, StringType, TimestampType
-from pyspark.sql.functions import row_number, current_timestamp,col
+from pyspark.sql.functions import row_number, current_timestamp,col, when, lit
 import validators
 from render import render_table
 import pymysql
@@ -183,56 +183,91 @@ def bronze_employees():
         return jsonify({"error": str(e)}), 500
 
 def silver_employees(df_last_updated):
-    try:
-        temp_table = 'temp_employees'
-        # Creamos window function
-        window_spec = Window.partitionBy("id").orderBy("load_timestamp")
+    temp_table = 'temp_employees'
 
-        # Guardamos en tabla temporal los nuevos registros
-        # Qutiamos duplicados en id dentro del mismo batch
-        # Quitamos id, department_id y job_id nulos
-        df_last_updated = df_last_updated.filter(col("id").isNotNull()) \
-            .filter(col("department_id").isNotNull()) \
-            .filter(col("job_id").isNotNull()) \
-            .withColumn("row_number", row_number().over(window_spec)) \
-            .filter("row_number = 1") \
-            .drop("row_number")
-        
-        df_last_updated.write \
-            .format("jdbc") \
-            .options(**JDBC_OPTIONS) \
-            .option("dbtable", temp_table) \
-            .mode("overwrite") \
-            .save()
-        
-        connection = pymysql.connect(**mysql_config)
-        cursor = connection.cursor()
-        
-        
-        # Aplicamos UPSERT, Solo tiene en cuenta los ultimos registros agregados en el ultimo file, 
-        # Si el id es nuevo, lo inserta, si ya existe, lo actualiza con el ultimo dato.
-        merge_query = f"""
-            INSERT INTO hired_employees 
-            SELECT * FROM {temp_table}
-            ON DUPLICATE KEY UPDATE
-                name = VALUES(name),
-                department_id = VALUES(department_id),
-                job_id = VALUES(job_id),
-                load_timestamp = VALUES(load_timestamp)
-        """
-        
-        cursor.execute(merge_query)
-        connection.commit()
-        
-        # Limpiamos la tabla temporal
-        cursor.execute(f"DROP TABLE IF EXISTS {temp_table}")
-        connection.commit()
-        
-        cursor.close()
-        connection.close()
-        
-    except Exception as e:
-        return str(e)
+    # 1) Motivo de rechazo por fila (null = fila valida).
+    #    Si una fila tiene varios problemas, queda el primero de la cadena.
+    #    Ojo: con el modo PERMISSIVE, un valor que Spark no puede parsear (ej: "abc" en job_id)
+    #    tambien llega como null, asi que "missing" significa vacio o invalido.
+    df = df_last_updated.withColumn(
+        "reject_reason",
+        when(col("id").isNull(), "missing_id")
+        .when(col("department_id").isNull(), "missing_department_id")
+        .when(col("job_id").isNull(), "missing_job_id")
+        .when(col("datetime").isNull(), "missing_datetime")  # regla nueva: borrala si solo queres registrar lo que ya se descartaba
+    )
+
+    # 2) Ids duplicados dentro del mismo archivo: queda la primera fila valida, el resto se rechaza.
+    #    asc_nulls_first ordena primero las filas sin motivo (las validas) dentro de cada id.
+    window_spec = Window.partitionBy("id").orderBy(col("reject_reason").asc_nulls_first(), col("load_timestamp"))
+    df = df.withColumn("row_number", row_number().over(window_spec)) \
+        .withColumn("reject_reason",
+                    when(col("reject_reason").isNull() & (col("row_number") > 1), lit("duplicate_id"))
+                    .otherwise(col("reject_reason"))) \
+        .drop("row_number") \
+        .cache()
+    # cache: el df se usa en varios conteos y escrituras. Sin cache Spark lo recalcula en cada una y,
+    # como la window empata en load_timestamp, un duplicado podria quedar cargado Y rechazado.
+
+    df_valid = df.filter(col("reject_reason").isNull()) \
+        .select("id", "name", "datetime", "department_id", "job_id", "load_timestamp")
+    df_rejected = df.filter(col("reject_reason").isNotNull()) \
+        .select("id", "name", "datetime", "department_id", "job_id", "reject_reason", "load_timestamp")
+
+    # 3) Reconciliacion: todo lo que entra sale cargado o rechazado
+    rows_read = df.count()
+    rows_loaded = df_valid.count()
+    rows_rejected = df_rejected.count()
+    if rows_read != rows_loaded + rows_rejected:
+        raise ValueError(f"Reconciliacion fallida: leidas={rows_read} cargadas={rows_loaded} rechazadas={rows_rejected}")
+    rejected_by_reason = {row["reject_reason"]: row["count"]
+                          for row in df_rejected.groupBy("reject_reason").count().collect()}
+
+    # 4) Rechazadas con su motivo. Append: cada carga suma sus rechazos y se distinguen por load_timestamp
+    df_rejected.write \
+        .format("jdbc") \
+        .options(**JDBC_OPTIONS) \
+        .option("dbtable", "hired_employees_rejected") \
+        .mode("append") \
+        .save()
+
+    # 5) Validas: igual que antes, tabla temporal + UPSERT
+    df_valid.write \
+        .format("jdbc") \
+        .options(**JDBC_OPTIONS) \
+        .option("dbtable", temp_table) \
+        .mode("overwrite") \
+        .save()
+
+    connection = pymysql.connect(**mysql_config)
+    cursor = connection.cursor()
+
+    # Si el id es nuevo, lo inserta; si ya existe, lo actualiza con el ultimo dato.
+    merge_query = f"""
+        INSERT INTO hired_employees
+        SELECT * FROM {temp_table}
+        ON DUPLICATE KEY UPDATE
+            name = VALUES(name),
+            department_id = VALUES(department_id),
+            job_id = VALUES(job_id),
+            load_timestamp = VALUES(load_timestamp)
+    """
+    cursor.execute(merge_query)
+    connection.commit()
+
+    cursor.execute(f"DROP TABLE IF EXISTS {temp_table}")
+    connection.commit()
+    cursor.close()
+    connection.close()
+
+    df.unpersist()
+
+    return {
+        "rows_read": rows_read,
+        "rows_loaded": rows_loaded,
+        "rows_rejected": rows_rejected,
+        "rejected_by_reason": rejected_by_reason,
+    }
 
 @app.route('/query-1')
 def query_1():
